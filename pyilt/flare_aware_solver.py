@@ -86,8 +86,13 @@ class FlareAwareILT(nn.Module):
         """
         eps = 1e-8
 
+        # If the imaging pipeline is not differentiably connected to the mask
+        # (e.g. TorchLitho adapter returns a detached aerial image), fall back
+        # to a uniform sensitivity map.
+        if not (isinstance(I_diff, torch.Tensor) and I_diff.requires_grad):
+            return torch.ones_like(mask)
+
         # Use the same mask tensor that was used to compute I_diff / I_flare.
-        # Allow unused in case the simulator does not expose full gradients.
         grad_I_diff = torch.autograd.grad(
             I_diff.sum(),
             mask,
@@ -273,7 +278,7 @@ class FlareAwareILT(nn.Module):
                 best_mask = mask.detach().clone()
 
             # Text progress bar
-            progress = (iteration + 1) / self.max_iters
+            progress = (iteration + 1) / max(self.max_iters, 1)
             filled = int(bar_width * progress)
             bar = "#" * filled + "-" * (bar_width - filled)
             sys.stdout.write(
