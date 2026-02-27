@@ -2,3 +2,4 @@ work/
 __pycache__/
 lib/python3.12/
 .venv/
+venv/
