@@ -13,10 +13,12 @@ import sys
 sys.path.append(".")
 
 import torch
+import matplotlib.pyplot as plt
 
 import pycommon.glp as glp
 import pyilt.initializer as initializer
 import pyilt.evaluation as evaluation
+import pyilt.simpleilt as simpleilt
 
 from pyilt.flare_psf import FlarePSF
 from pyilt.flare_aware_solver import FlareAwareILT
@@ -25,8 +27,8 @@ from pyilt.lithosim import LithoSim
 
 def main():
     cfg = {
-        # Reduced for ~2 minute runs on mid-range GPUs
-        "max_iters": 60,
+        # Very small iteration count for fast testing
+        "max_iters": 20,
         "lr": 0.01,
         "flare_weight_beta": 5.0,
         "flare_reg_weight": 0.1,
@@ -34,7 +36,8 @@ def main():
         "theta_M": 10.0,
     }
 
-    flare_psf = FlarePSF(tis=0.08, kernel_size=401, pixel_size=1.0)
+    # Smaller flare kernel for quick tests
+    flare_psf = FlarePSF(tis=0.08, kernel_size=101, pixel_size=1.0)
 
     from pyilt.torchlitho_adapter import TorchLithoAbbe
 
@@ -43,11 +46,26 @@ def main():
     solver = FlareAwareILT(cfg, litho, flare_psf)
 
     # Load a benchmark testcase
-    design = glp.Design("./benchmark/ICCAD2013/M1_test1.glp")
+    design = glp.Design("./benchmark/ICCAD2013/M1_test1.glp", down=1)
 
-    # Use existing pixel initializer from OpenILT
+    # Use the same tiling/centering as SimpleILT so the tile actually
+    # contains geometry.
+    cfg_simple = simpleilt.SimpleCfg("./config/simpleilt512.txt")
+    design.center(
+        cfg_simple["TileSizeX"],
+        cfg_simple["TileSizeY"],
+        cfg_simple["OffsetX"],
+        cfg_simple["OffsetY"],
+    )
+
     init = initializer.PixelInit()
-    target, params = init.run(design, 2048, 2048, 0, 0)
+    target, params = init.run(
+        design,
+        cfg_simple["TileSizeX"],
+        cfg_simple["TileSizeY"],
+        cfg_simple["OffsetX"],
+        cfg_simple["OffsetY"],
+    )
 
     # Ensure float32 tensors without triggering copy-construction warnings
     if isinstance(target, torch.Tensor):
@@ -64,37 +82,43 @@ def main():
     print("Starting flare-aware ILT optimization...")
     best_params, best_mask = solver.solve(target, params)
 
-    # Convert to numpy for evaluation
+    # Convert to numpy for basic evaluation
     best_mask_np = best_mask.detach().cpu().numpy()
     target_np = target.detach().cpu().numpy()
 
     basic_eval = evaluation.Basic(litho, 0.5)
     l2, pvb = basic_eval.run(best_mask_np, target_np)
 
-    epe_checker = evaluation.EPEChecker(litho, 0.5)
-    epe_in, epe_out = epe_checker.run(best_mask_np, target_np)
-    epe = epe_in + epe_out
-
-    shot_counter = evaluation.ShotCounter(litho, 0.5)
-    shots = shot_counter.run(best_mask_np)
-
-    print("\n=== Final Results ===")
+    print("\n=== Final Results (quick test) ===")
     print(f"L2 Error: {l2:.2f}")
     print(f"PV Band: {pvb:.2f}")
-    print(f"EPE Violations: {epe}")
-    print(f"Shot Count: {shots}")
 
     torch.save(
         {
             "params": best_params,
             "mask": best_mask,
             "target": target,
-            "metrics": {"l2": l2, "pvb": pvb, "epe": epe, "shots": shots},
+            "metrics": {"l2": l2, "pvb": pvb},
         },
         "flare_aware_results.pt",
     )
 
     print("\nResults saved to flare_aware_results.pt")
+
+    # Quick preview of target vs optimized mask
+    plt.figure(figsize=(6, 3))
+    plt.subplot(1, 2, 1)
+    plt.title("Optimized Mask")
+    plt.imshow(best_mask_np, cmap="gray")
+    plt.axis("off")
+
+    plt.subplot(1, 2, 2)
+    plt.title("Target")
+    plt.imshow(target_np, cmap="gray")
+    plt.axis("off")
+
+    plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
