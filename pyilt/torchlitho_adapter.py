@@ -104,12 +104,17 @@ class TorchLithoAbbe(nn.Module):
 
         Hp, Wp = int(m2d_pad.shape[-2]), int(m2d_pad.shape[-1])
 
+        # For now, run TorchLitho on CPU to avoid device mismatches with its
+        # internal tensors, then move the resulting aerial image back to the
+        # mask's device.
+        cpu_mask = m2d_pad.detach().to("cpu")
+
         # Configure TorchLitho to use the pixel mask spectrum path
         self.im.Mask.MaskType = "2DPixel"
         self.im.Mask.Nf = Wp
         self.im.Mask.Ng = Hp
-        # Feature is the complex transmittance map
-        self.im.Mask.Feature = m2d_pad.to(torch.complex64)
+        # Feature is the complex transmittance map (on CPU)
+        self.im.Mask.Feature = cpu_mask.to(torch.complex64)
 
         # Make mask/wafer sampling consistent with the tensor size
         self.im.Numerics.SampleNumber_Mask_X = Wp
@@ -118,7 +123,7 @@ class TorchLithoAbbe(nn.Module):
         self.im.Numerics.SampleNumber_Wafer_Y = Hp
 
         ali = self.im.CalculateAerialImage()
-        I = ali.Intensity
+        I = ali.Intensity.to(cpu_mask.device)
 
         # TorchLitho returns [Z, X, Y] after transpose in Calculate2DAerialImage
         if I.dim() == 3:
@@ -130,7 +135,8 @@ class TorchLithoAbbe(nn.Module):
         if pad_h or pad_w:
             I = I[:H, :W]
 
-        return I.unsqueeze(0).unsqueeze(0)
+        # Return on the original mask's device
+        return I.to(mask.device).unsqueeze(0).unsqueeze(0)
 
     def forward(self, mask: torch.Tensor):
         """
