@@ -211,7 +211,7 @@ class FlareAwareILT(nn.Module):
             return out[0]
         return out
 
-    def solve(self, target, params):
+    def solve(self, target, params, return_history: bool = False):
         """
         Main flare-aware ILT optimization loop.
 
@@ -244,6 +244,13 @@ class FlareAwareILT(nn.Module):
         best_loss = None
         best_params = None
         best_mask = None
+        best_snapshot = {}
+
+        history = {
+            "loss": [],
+            "weighted_l2": [],
+            "flare_reg": [],
+        }
 
         bar_width = 30
 
@@ -297,10 +304,20 @@ class FlareAwareILT(nn.Module):
             loss.backward()
             optimizer.step()
 
+            history["loss"].append(float(loss.detach().cpu()))
+            history["weighted_l2"].append(float(metrics["weighted_l2"].detach().cpu()))
+            history["flare_reg"].append(float(metrics["flare_reg"].detach().cpu()))
+
             if best_loss is None or loss.item() < best_loss:
                 best_loss = loss.item()
                 best_params = params.detach().clone()
                 best_mask = mask.detach().clone()
+                # Store a lightweight snapshot for paper-friendly outputs
+                best_snapshot = {
+                    "printed": printed.detach().clone(),
+                    "I_diff": I_diff.detach().clone(),
+                    "alpha_mask": alpha_mask.detach().clone(),
+                }
 
             # Text progress bar
             progress = (iteration + 1) / max(self.max_iters, 1)
@@ -320,5 +337,8 @@ class FlareAwareILT(nn.Module):
         # Squeeze back to [H, W] for convenience
         best_params = best_params.squeeze(0).squeeze(0)
         best_mask = best_mask.squeeze(0).squeeze(0)
+
+        if return_history:
+            return best_params, best_mask, {"history": history, "best_snapshot": best_snapshot}
         return best_params, best_mask
 

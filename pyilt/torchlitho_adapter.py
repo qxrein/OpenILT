@@ -1,10 +1,10 @@
 import importlib
 import os
 import sys
-from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 # Make sure TorchLitho's src directory is on the path
@@ -57,12 +57,6 @@ class TorchLithoAbbe(nn.Module):
         # Force Abbe or Hopkins imaging in TorchLitho
         self.im.Numerics.ImageCalculationMethod = image_method
 
-        # Precompute a single aerial image; current integration ignores the
-        # OpenILT mask and uses TorchLitho's own internal mask definition, so
-        # repeated calls would otherwise recompute the same image at high cost.
-        ali = self.im.CalculateAerialImage()
-        self._I_base = ali.Intensity.detach()
-
     def abbe(self, mask: torch.Tensor) -> torch.Tensor:
         """
         Abbe/Hopkins imaging entry point used by `FlareAwareILT`.
@@ -77,26 +71,63 @@ class TorchLithoAbbe(nn.Module):
         I_diff : torch.Tensor
             Diffraction-limited aerial image [B,1,H,W] on the same device.
         """
-        if isinstance(mask, torch.Tensor):
-            I = self._I_base.to(mask.device)
-            # If the OpenILT mask resolution differs from TorchLitho's wafer
-            # sampling, resize the aerial image to match for testing purposes.
-            if I.dim() == 2:
-                I = I.unsqueeze(0).unsqueeze(0)
-            elif I.dim() == 3:
-                I = I.unsqueeze(0)
-            if mask.dim() == 4 and I.shape[-2:] != mask.shape[-2:]:
-                I = torch.nn.functional.interpolate(
-                    I, size=mask.shape[-2:], mode="bilinear", align_corners=False
-                )
-        else:
-            I = self._I_base
-            if I.dim() == 2:
-                I = I.unsqueeze(0).unsqueeze(0)
-            elif I.dim() == 3:
-                I = I.unsqueeze(0)
+        """
+        True TorchLitho Abbe imaging driven by the input mask tensor.
 
-        return I
+        This uses TorchLitho's `MaskType='2DPixel'` path, which expects an odd
+        sampling size. If the incoming mask has even spatial dimensions, we
+        pad by 1 pixel on the right/bottom, run TorchLitho, then crop back.
+        """
+        if not isinstance(mask, torch.Tensor):
+            raise TypeError("mask must be a torch.Tensor")
+
+        # Accept [H,W] or [B,1,H,W] (single batch)
+        if mask.dim() == 4:
+            if mask.size(0) != 1 or mask.size(1) != 1:
+                raise ValueError(f"Expected mask shape [1,1,H,W], got {mask.shape}")
+            m2d = mask[0, 0]
+        elif mask.dim() == 2:
+            m2d = mask
+        else:
+            raise ValueError(f"Unsupported mask shape: {mask.shape}")
+
+        H, W = int(m2d.shape[-2]), int(m2d.shape[-1])
+        pad_h = 1 if (H % 2 == 0) else 0
+        pad_w = 1 if (W % 2 == 0) else 0
+        if pad_h or pad_w:
+            m2d_pad = F.pad(m2d, (0, pad_w, 0, pad_h), mode="replicate")
+        else:
+            m2d_pad = m2d
+
+        Hp, Wp = int(m2d_pad.shape[-2]), int(m2d_pad.shape[-1])
+
+        # Configure TorchLitho to use the pixel mask spectrum path
+        self.im.Mask.MaskType = "2DPixel"
+        self.im.Mask.Nf = Wp
+        self.im.Mask.Ng = Hp
+        # Feature is the complex transmittance map
+        self.im.Mask.Feature = m2d_pad.to(torch.complex64)
+
+        # Make mask/wafer sampling consistent with the tensor size
+        self.im.Numerics.SampleNumber_Mask_X = Wp
+        self.im.Numerics.SampleNumber_Mask_Y = Hp
+        self.im.Numerics.SampleNumber_Wafer_X = Wp
+        self.im.Numerics.SampleNumber_Wafer_Y = Hp
+
+        ali = self.im.CalculateAerialImage()
+        I = ali.Intensity
+
+        # TorchLitho returns [Z, X, Y] after transpose in Calculate2DAerialImage
+        if I.dim() == 3:
+            I = I[0]  # nominal focus slice
+        if I.dim() != 2:
+            raise ValueError(f"Unexpected TorchLitho intensity shape: {I.shape}")
+
+        # Crop back to original size if padded
+        if pad_h or pad_w:
+            I = I[:H, :W]
+
+        return I.unsqueeze(0).unsqueeze(0)
 
     def forward(self, mask: torch.Tensor):
         """
