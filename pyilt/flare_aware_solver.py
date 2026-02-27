@@ -270,8 +270,19 @@ class FlareAwareILT(nn.Module):
             # 6. Simple resist model
             printed = torch.sigmoid(10.0 * (I_total - 0.3))
 
-            # 7. Loss (use alpha at mask resolution for weighting)
-            loss, metrics = self.compute_loss(printed, target, mask, I_diff, I_flare, alpha_mask)
+            # 7. Loss (use alpha at mask resolution for weighting). If the
+            # imaging grid resolution differs from the target resolution,
+            # resize the target to the printed image grid for the fidelity term.
+            if printed.shape[-2:] != target.shape[-2:]:
+                target_img = F.interpolate(
+                    target,
+                    size=printed.shape[-2:],
+                    mode="nearest",
+                )
+            else:
+                target_img = target
+
+            loss, metrics = self.compute_loss(printed, target_img, mask, I_diff, I_flare, alpha_mask)
             loss.backward()
             optimizer.step()
 
