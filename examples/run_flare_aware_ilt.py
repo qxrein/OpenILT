@@ -8,11 +8,20 @@ simulator wrapped by `pyilt.lithosim.LithoSim`. For true Abbe/Hopkins
 behavior, replace that wrapper with a TorchLitho-based implementation.
 """
 
+import os
 import sys
+import time
 
 sys.path.append(".")
 
 import torch
+import matplotlib
+
+# Avoid permission issues on shared systems
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
+
+if not os.environ.get("DISPLAY"):
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import pycommon.glp as glp
@@ -80,9 +89,9 @@ def main():
 
     # Run optimization
     print("Starting flare-aware ILT optimization...")
-    best_params, best_mask = solver.solve(target, params)
+    best_params, best_mask, info = solver.solve(target, params, return_history=True)
 
-    # Convert to numpy for basic evaluation
+    # Convert to numpy for basic evaluation + preview outputs
     best_mask_np = best_mask.detach().cpu().numpy()
     target_np = target.detach().cpu().numpy()
 
@@ -95,17 +104,23 @@ def main():
     print(f"L2 Error: {l2:.2f}")
     print(f"PV Band: {pvb:.2f}")
 
+    # Results bundle for paper-friendly proof-of-concept
+    outdir = os.path.join("results", f"flare_aware_{time.strftime('%Y%m%d_%H%M%S')}")
+    os.makedirs(outdir, exist_ok=True)
+
     torch.save(
         {
             "params": best_params,
             "mask": best_mask,
             "target": target,
             "metrics": {"l2": l2, "pvb": pvb},
+            "history": info["history"],
+            "best_snapshot": {k: v.detach().cpu() for k, v in info["best_snapshot"].items()},
         },
-        "flare_aware_results.pt",
+        os.path.join(outdir, "flare_aware_results.pt"),
     )
 
-    print("\nResults saved to flare_aware_results.pt")
+    print(f"\nResults saved to {outdir}/flare_aware_results.pt")
 
     # Quick preview of target vs optimized mask
     plt.figure(figsize=(6, 3))
@@ -120,7 +135,23 @@ def main():
     plt.axis("off")
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig(os.path.join(outdir, "mask_vs_target.png"), dpi=200)
+    if os.environ.get("DISPLAY"):
+        plt.show()
+    plt.close()
+
+    # Save loss curves
+    plt.figure(figsize=(6, 3))
+    plt.plot(info["history"]["loss"], label="total")
+    plt.plot(info["history"]["weighted_l2"], label="weighted_l2")
+    plt.plot(info["history"]["flare_reg"], label="flare_reg")
+    plt.yscale("log")
+    plt.xlabel("iteration")
+    plt.ylabel("loss")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, "loss_curves.png"), dpi=200)
+    plt.close()
 
 
 if __name__ == "__main__":
