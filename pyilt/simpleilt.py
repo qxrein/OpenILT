@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as func
+import torch.nn.functional as F
 
 from pycommon.settings import *
 import pycommon.utils as common
@@ -52,7 +53,20 @@ class SimpleILT:
         self._filter = torch.zeros([self._config["TileSizeX"], self._config["TileSizeY"]], dtype=REALTYPE, device=self._device)
         self._filter[self._config["OffsetX"]:self._config["OffsetX"]+self._config["ILTSizeX"], \
                      self._config["OffsetY"]:self._config["OffsetY"]+self._config["ILTSizeY"]] = 1
-    
+
+    def compute_pvband(self, mask):
+        """
+        Placeholder PV band loss for flare-aware extensions.
+
+        In a full implementation this should evaluate multiple process
+        corners (dose, focus) and measure the band between printedMax
+        and printedMin contours. For now it returns zero so that
+        flare-aware solvers can call it without breaking existing code.
+        """
+        if isinstance(mask, torch.Tensor):
+            return torch.tensor(0.0, device=mask.device)
+        return torch.tensor(0.0)
+
     def solve(self, target, params, curv=None, verbose=0): 
         # Initialize
         if not isinstance(target, torch.Tensor): 
