@@ -86,7 +86,9 @@ def main():
     best_mask_np = best_mask.detach().cpu().numpy()
     target_np = target.detach().cpu().numpy()
 
-    basic_eval = evaluation.Basic(litho, 0.5)
+    # Use the original OpenILT lithography model for evaluation, so that
+    # the printed images match the target resolution.
+    basic_eval = evaluation.Basic()
     l2, pvb = basic_eval.run(best_mask_np, target_np)
 
     print("\n=== Final Results (quick test) ===")
