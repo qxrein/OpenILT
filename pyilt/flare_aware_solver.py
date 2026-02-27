@@ -149,12 +149,23 @@ class FlareAwareILT(nn.Module):
 
             L = L_fidelity + λ * L_PV + μ * L_flare
         """
-        # Sensitivity and adaptive weights
+        # Sensitivity and adaptive weights (defined on the mask grid)
         S = self.compute_sensitivity_map(mask, I_diff, I_flare)
         w = self.compute_adaptive_weights(S, alpha)
 
+        # Resize weights to the printed image grid if needed
+        if w.shape[-2:] != printed.shape[-2:]:
+            w_img = F.interpolate(
+                w,
+                size=printed.shape[-2:],
+                mode="bilinear",
+                align_corners=False,
+            )
+        else:
+            w_img = w
+
         # Weighted fidelity loss
-        weighted_l2 = (w * (printed - target) ** 2).mean()
+        weighted_l2 = (w_img * (printed - target) ** 2).mean()
 
         # Process variation band loss (if available)
         pvb_loss = torch.tensor(0.0, device=printed.device)
