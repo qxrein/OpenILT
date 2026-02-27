@@ -95,7 +95,10 @@ class TorchLithoAbbe(nn.Module):
         pad_h = 1 if (H % 2 == 0) else 0
         pad_w = 1 if (W % 2 == 0) else 0
         if pad_h or pad_w:
-            m2d_pad = F.pad(m2d, (0, pad_w, 0, pad_h), mode="replicate")
+            # Pad in 4D for replicate mode, then squeeze back
+            m4d = m2d.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
+            m4d = F.pad(m4d, (0, pad_w, 0, pad_h), mode="replicate")
+            m2d_pad = m4d[0, 0]
         else:
             m2d_pad = m2d
 
