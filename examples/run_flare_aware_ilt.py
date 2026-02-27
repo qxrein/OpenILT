@@ -36,12 +36,12 @@ from pyilt.lithosim import LithoSim
 
 def main():
     cfg = {
-        # Very small iteration count for fast testing
-        "max_iters": 20,
-        "lr": 0.01,
+        # ILT config tuned for clearer convergence on large GPUs
+        "max_iters": 100,
+        "lr": 0.1,
         "flare_weight_beta": 5.0,
-        "flare_reg_weight": 0.1,
-        "lambda1": 1.0,
+        "flare_reg_weight": 0.01,
+        "lambda1": 0.0,
         "theta_M": 10.0,
     }
 
@@ -122,7 +122,7 @@ def main():
 
     print(f"\nResults saved to {outdir}/flare_aware_results.pt")
 
-    # Quick preview of target vs optimized mask
+    # Quick preview of target vs optimized mask (grayscale, print-friendly)
     plt.figure(figsize=(6, 3))
     plt.subplot(1, 2, 1)
     plt.title("Optimized Mask")
@@ -140,11 +140,39 @@ def main():
         plt.show()
     plt.close()
 
-    # Save loss curves
+    # Save loss curves (monochrome, dotted/marker styles for gray printouts)
     plt.figure(figsize=(6, 3))
-    plt.plot(info["history"]["loss"], label="total")
-    plt.plot(info["history"]["weighted_l2"], label="weighted_l2")
-    plt.plot(info["history"]["flare_reg"], label="flare_reg")
+    iters = range(len(info["history"]["loss"]))
+    plt.plot(
+        iters,
+        info["history"]["loss"],
+        linestyle="--",
+        marker="o",
+        color="black",
+        label="total",
+        linewidth=1.0,
+        markersize=3,
+    )
+    plt.plot(
+        iters,
+        info["history"]["weighted_l2"],
+        linestyle=":",
+        marker="s",
+        color="dimgray",
+        label="weighted_l2",
+        linewidth=1.0,
+        markersize=3,
+    )
+    plt.plot(
+        iters,
+        info["history"]["flare_reg"],
+        linestyle="-.",
+        marker="^",
+        color="gray",
+        label="flare_reg",
+        linewidth=1.0,
+        markersize=3,
+    )
     plt.yscale("log")
     plt.xlabel("iteration")
     plt.ylabel("loss")
