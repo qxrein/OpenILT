@@ -250,25 +250,28 @@ class FlareAwareILT(nn.Module):
             I_flare = F.conv2d(I_diff, psf_sc, padding="same")
 
             # 4. Flare intensity map alpha(r) at mask resolution
-            alpha = self.flare_psf.compute_flare_intensity_map(mask)
+            alpha_mask = self.flare_psf.compute_flare_intensity_map(mask)
 
-            # Resize alpha to match the imaging grid used by I_diff / I_flare
-            if alpha.shape[-2:] != I_diff.shape[-2:]:
-                alpha = F.interpolate(
-                    alpha,
+            # Separate version of alpha resized to the imaging grid used by
+            # I_diff / I_flare for the forward model only.
+            if alpha_mask.shape[-2:] != I_diff.shape[-2:]:
+                alpha_img = F.interpolate(
+                    alpha_mask,
                     size=I_diff.shape[-2:],
                     mode="bilinear",
                     align_corners=False,
                 )
+            else:
+                alpha_img = alpha_mask
 
             # 5. Total image with flare: I = I_diff + α · I_flare
-            I_total = I_diff + alpha * I_flare
+            I_total = I_diff + alpha_img * I_flare
 
             # 6. Simple resist model
             printed = torch.sigmoid(10.0 * (I_total - 0.3))
 
-            # 7. Loss
-            loss, metrics = self.compute_loss(printed, target, mask, I_diff, I_flare, alpha)
+            # 7. Loss (use alpha at mask resolution for weighting)
+            loss, metrics = self.compute_loss(printed, target, mask, I_diff, I_flare, alpha_mask)
             loss.backward()
             optimizer.step()
 
