@@ -152,11 +152,14 @@ Results are saved under `results/flare_aware_YYYYMMDD_HHMMSS/`:
 | 1st | `run_flare_aware_ilt.py --synthetic` | **Gaussian** (SimpleDiffractionLitho) | e.g. `flare_aware_20260228_042139` | S can vary (≈0.5) |
 | 2nd | `run_flare_aware_ilt.py --synthetic --torchlitho` | **Abbe** (TorchLitho) | e.g. `flare_aware_20260228_042629` | S = 1 (uniform) |
 
-So if you then run `diagnose_flare_results.py` with no argument, the plots (mask_vs_target, flare_diagnostics, loss_curves, diagnostic_plot) correspond to the **second (TorchLitho/Abbe)** run. To diagnose the first (Gaussian) run, pass that folder explicitly:
+So if you then run `diagnose_flare_results.py` with no argument, the plots (mask_vs_target, flare_diagnostics, loss_curves, diagnostic_plot) correspond to the **second (TorchLitho/Abbe)** run. To diagnose the **non-TorchLitho (Gaussian)** run, pass that folder explicitly:
 
 ```bash
+# Diagnose the Gaussian (SimpleDiffractionLitho) run, e.g.:
 python examples/diagnose_flare_results.py results/flare_aware_20260228_042139
 ```
+
+Diagnosis will print mask stats, loss history, S/w maps, and write `diagnostic_plot.png` and `flare_diagnostics.png` into that folder.
 
 **Interpretation:**
 
