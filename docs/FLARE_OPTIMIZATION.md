@@ -286,3 +286,45 @@ python examples/compare_flare_aware.py --synthetic
 | Final loss | 8.23e-03 | 6.13e-03 |
 
 **Observation:** With flare regularization (μ=0.3), L2 and PV band improve (lower is better); binary error is slightly higher. The flare-aware run trades a small amount of pixel-level fidelity for better printed-image metrics (L2, PVB), consistent with the regularizer biasing the mask away from flare-amplifying patterns.
+
+### Large run: 2048×2048, 300 iters (synthetic, flare-aware)
+
+Paper-style run with default size and iterations:
+
+```bash
+python examples/run_flare_aware_ilt.py --synthetic
+# Uses --size 2048, max_iters 300 by default
+```
+
+```
+Mask size: 2048x2048  |  iters: 300  |  device: cuda
+
+Loss
+  total:     [0.0108, 0.0232]  final: 0.0108
+  Δ total:   -0.0124
+  Δ L2:      -0.0120
+  Δ reg:     -0.0011
+  Δ bin:     +0.0002
+
+Metrics
+  L2 Error:    1061314
+  PV Band:     51815
+  binary error: 4.66% (195356 / 4194304)
+
+Maps
+  S:  range [0.50, 0.50]  mean 0.50  std 0.00
+  w:  range [0.42, 0.49]  mean 0.44  std 0.02
+```
+
+### Comparison: size and iterations
+
+All runs use synthetic dense/sparse pattern and SimpleDiffractionLitho (Gaussian). Flare-aware (μ=0.3) unless noted.
+
+| Size    | Iters | Δ total   | Δ reg    | Binary error | L2 (eval) | PVB (eval) |
+|---------|-------|----------|----------|--------------|-----------|------------|
+| 256×256 | 40    | −0.0115  | −0.0019  | ~7%          | ~15600    | ~285       |
+| 256×256 | 40 (μ=0) | −0.006  | 0        | ~7%          | ~15637    | ~292       |
+| 2048×2048 | 300  | −0.0124  | −0.0011  | 4.66%        | 1061314   | 51815      |
+
+- **256, 40 iters:** Quick comparison; flare-aware improves L2/PVB vs μ=0.
+- **2048, 300 iters:** Paper-style; more iterations and resolution give lower binary error (4.66%) and clear loss decrease; L2/PVB scale with the number of pixels.
