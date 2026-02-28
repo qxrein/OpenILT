@@ -2,4 +2,4 @@ work/
 __pycache__/
 lib/python3.12/
 .venv/
-venv/
+venv/results/flare_aware_20260228_053007/
