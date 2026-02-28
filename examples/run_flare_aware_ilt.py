@@ -72,7 +72,7 @@ def main():
 
     cfg = {
         # ILT config tuned for RTX 3050 / i5 12th gen (faster)
-        "max_iters": 40,
+        "max_iters": 120,
         "lr": 0.1,
         "flare_weight_beta": 2.0,  # Smaller β so w varies more with α
         "flare_reg_weight": 0.0 if args.no_flare else 0.3,  # μ=0 for non-flare-aware comparison
@@ -102,7 +102,7 @@ def main():
 
     if args.synthetic:
         # Synthetic: dense (left) vs sparse (right) for strong flare contrast
-        size = 256
+        size = 2048
         target, params = create_synthetic_pattern(size, size)
         print("Using synthetic dense/sparse pattern for flare contrast")
     else:
