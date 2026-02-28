@@ -36,8 +36,8 @@ from pyilt.lithosim import LithoSim
 
 def main():
     cfg = {
-        # ILT config tuned for clearer convergence on large GPUs
-        "max_iters": 100,
+        # ILT config tuned for gradient flow + clear convergence
+        "max_iters": 60,
         "lr": 0.1,
         "flare_weight_beta": 5.0,
         "flare_reg_weight": 0.01,
@@ -48,9 +48,13 @@ def main():
     # Smaller flare kernel for quick tests
     flare_psf = FlarePSF(tis=0.08, kernel_size=101, pixel_size=1.0)
 
-    from pyilt.torchlitho_adapter import TorchLithoAbbe
+    # Use SimpleDiffractionLitho for optimization so gradients flow.
+    # TorchLithoAbbe returns detached tensors (no gradients), so the
+    # optimizer cannot update the mask. SimpleDiffractionLitho uses
+    # I_diff = mask (identity), which is fully differentiable.
+    from pyilt.simple_diffraction import SimpleDiffractionLitho
 
-    litho = TorchLithoAbbe(image_method="abbe")
+    litho = SimpleDiffractionLitho()
 
     solver = FlareAwareILT(cfg, litho, flare_psf)
 
@@ -141,8 +145,13 @@ def main():
     plt.close()
 
     # Save loss curves (monochrome, dotted/marker styles for gray printouts)
-    plt.figure(figsize=(6, 3))
+    # Add grad_norm subplot if available (to verify gradient flow)
+    has_grad = "grad_norm" in info["history"] and len(info["history"]["grad_norm"]) > 0
+    ncols = 2 if has_grad else 1
+    plt.figure(figsize=(6 * ncols, 3))
     iters = range(len(info["history"]["loss"]))
+
+    plt.subplot(1, ncols, 1)
     plt.plot(
         iters,
         info["history"]["loss"],
@@ -177,6 +186,16 @@ def main():
     plt.xlabel("iteration")
     plt.ylabel("loss")
     plt.legend()
+    plt.title("Loss curves")
+
+    if has_grad:
+        plt.subplot(1, ncols, 2)
+        plt.plot(iters, info["history"]["grad_norm"], color="black", linewidth=1.0)
+        plt.xlabel("iteration")
+        plt.ylabel("||∇L||")
+        plt.yscale("log")
+        plt.title("Gradient norm")
+
     plt.tight_layout()
     plt.savefig(os.path.join(outdir, "loss_curves.png"), dpi=200)
     plt.close()
