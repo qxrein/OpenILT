@@ -68,11 +68,17 @@ def main():
         action="store_true",
         help="Disable flare regularization (μ=0) for comparison with flare-aware run.",
     )
+    parser.add_argument(
+        "--size",
+        type=int,
+        default=2048,
+        help="Mask size (H=W). Default 2048 for paper-quality. Use 256 for quick test (less memory).",
+    )
     args = parser.parse_args()
 
     cfg = {
-        # ILT config tuned for RTX 3050 / i5 12th gen (faster)
-        "max_iters": 120,
+        # Paper-quality: 2048x2048, 300 iters (reduce --size 256 for quick test)
+        "max_iters": 300,
         "lr": 0.1,
         "flare_weight_beta": 2.0,  # Smaller β so w varies more with α
         "flare_reg_weight": 0.0 if args.no_flare else 0.3,  # μ=0 for non-flare-aware comparison
@@ -102,13 +108,14 @@ def main():
 
     if args.synthetic:
         # Synthetic: dense (left) vs sparse (right) for strong flare contrast
-        size = 2048
+        size = args.size
         target, params = create_synthetic_pattern(size, size)
-        print("Using synthetic dense/sparse pattern for flare contrast")
+        print(f"Using synthetic dense/sparse pattern {size}x{size}")
     else:
-        # Load benchmark testcase
+        # Load benchmark testcase (config by --size)
         design = glp.Design("./benchmark/ICCAD2013/M1_test1.glp", down=1)
-        cfg_simple = simpleilt.SimpleCfg("./config/multilevel256.txt")
+        config_path = "./config/simpleilt2048.txt" if args.size >= 2048 else "./config/multilevel256.txt"
+        cfg_simple = simpleilt.SimpleCfg(config_path)
         design.center(
             cfg_simple["TileSizeX"],
             cfg_simple["TileSizeY"],
@@ -133,7 +140,8 @@ def main():
             params = torch.tensor(params, dtype=torch.float32)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
+    h, w = target.shape[-2], target.shape[-1]
+    print(f"Mask size: {h}x{w}  |  iters: {cfg['max_iters']}  |  device: {device}")
     print("Starting flare-aware ILT optimization...")
     best_params, best_mask, info = solver.solve(target, params, return_history=True)
 
