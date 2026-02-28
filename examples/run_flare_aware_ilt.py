@@ -64,6 +64,11 @@ def main():
         help="Use TorchLitho for I_diff (no gradients; S will be uniform). For S verification, TorchLitho would need to be differentiable.",
     )
     parser.add_argument(
+        "--openilt-abbe",
+        action="store_true",
+        help="Use OpenILT's native kernel-based Abbe (hard-edged pupil). Differentiable. Recommended for paper: run with --size 256.",
+    )
+    parser.add_argument(
         "--no-flare",
         action="store_true",
         help="Disable flare regularization (μ=0) for comparison with flare-aware run.",
@@ -92,12 +97,19 @@ def main():
     # Small flare kernel for speed (33 vs 101: ~10x faster conv)
     flare_psf = FlarePSF(tis=0.08, kernel_size=33, pixel_size=1.0)
 
-    # Litho model: SimpleDiffractionLitho (differentiable) or TorchLitho (no gradients)
+    # Litho model: SimpleDiffractionLitho, OpenILTAbbe, or TorchLitho
     if args.torchlitho:
         from pyilt.torchlitho_adapter import TorchLithoAbbe
 
         litho = TorchLithoAbbe(image_method="abbe")
         print("Using TorchLitho (S will be uniform: no gradients from litho)")
+    elif args.openilt_abbe:
+        from pyilt.openilt_abbe import OpenILTAbbe
+
+        litho = OpenILTAbbe(config="./config/lithosimple.txt")
+        print("Using OpenILT native kernel-based Abbe (hard-edged pupil, differentiable)")
+        if args.size > 512:
+            print("  Tip: OpenILT Abbe is slower; use --size 256 for quicker runs.")
     else:
         from pyilt.simple_diffraction import SimpleDiffractionLitho
 

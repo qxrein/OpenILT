@@ -114,9 +114,10 @@ Parameters (typical defaults): \( \theta_M = 10 \), \( \mu = 0.3 \), \( \beta = 
 | Model | Differentiable | S varies | Use case |
 |-------|----------------|----------|----------|
 | **SimpleDiffractionLitho** | Yes (Gaussian blur) | Limited (S ≈ 0.5) | Proof-of-concept, fast runs |
+| **OpenILTAbbe** | Yes (kernel-based) | Yes (hard-edged pupil) | **Paper experiment: native Abbe pupil** |
 | **TorchLithoAbbe** | No (detached) | No (S = 1 fallback) | Real I_diff for comparison only |
 
-For gradient-based optimization, use SimpleDiffractionLitho (or any differentiable lithography model). TorchLitho gives realistic I_diff but no gradients, so the optimizer cannot improve the mask from the fidelity or flare terms.
+For gradient-based optimization, use SimpleDiffractionLitho or **OpenILTAbbe** (OpenILT's native hard-edged Abbe pupil). TorchLitho gives realistic I_diff but no gradients.
 
 ---
 
@@ -131,6 +132,9 @@ python examples/run_flare_aware_ilt.py --synthetic
 
 # TorchLitho for I_diff (no gradients; S uniform)
 python examples/run_flare_aware_ilt.py --synthetic --torchlitho
+
+# OpenILT native Abbe (hard-edged pupil) — recommended for paper
+python examples/run_flare_aware_ilt.py --synthetic --openilt-abbe --size 256
 
 # Diagnose results
 python examples/diagnose_flare_results.py
@@ -151,6 +155,7 @@ Results are saved under `results/flare_aware_YYYYMMDD_HHMMSS/`:
 |-------|---------|--------------|----------------|------------|
 | 1st | `run_flare_aware_ilt.py --synthetic` | **Gaussian** (SimpleDiffractionLitho) | e.g. `flare_aware_20260228_042139` | S can vary (≈0.5) |
 | 2nd | `run_flare_aware_ilt.py --synthetic --torchlitho` | **Abbe** (TorchLitho) | e.g. `flare_aware_20260228_042629` | S = 1 (uniform) |
+| — | `run_flare_aware_ilt.py --synthetic --openilt-abbe --size 256` | **OpenILT Abbe** (kernel-based) | e.g. `flare_aware_*` | S varies (hard-edged pupil) |
 
 So if you then run `diagnose_flare_results.py` with no argument, the plots (mask_vs_target, flare_diagnostics, loss_curves, diagnostic_plot) correspond to the **second (TorchLitho/Abbe)** run. To diagnose the **non-TorchLitho (Gaussian)** run, pass that folder explicitly:
 
@@ -328,3 +333,13 @@ All runs use synthetic dense/sparse pattern and SimpleDiffractionLitho (Gaussian
 
 - **256, 40 iters:** Quick comparison; flare-aware improves L2/PVB vs μ=0.
 - **2048, 300 iters:** Paper-style; more iterations and resolution give lower binary error (4.66%) and clear loss decrease; L2/PVB scale with the number of pixels.
+
+### OpenILT native Abbe experiment (256×256, hard-edged pupil)
+
+**Single most impactful experiment for the paper:** flare-aware ILT with OpenILT's kernel-based Abbe model (hard-edged circular pupil). Run:
+
+```bash
+python examples/run_flare_aware_ilt.py --synthetic --openilt-abbe --size 256
+```
+
+Uses precomputed kernels from `./kernel/` (derived from Abbe formulation with circular pupil). Fully differentiable; S should vary more meaningfully than with the Gaussian proxy because I_diff and I_flare have different gradient structure. Results will appear in `results/flare_aware_*/`; run `diagnose_flare_results.py` on that folder to get L2, PVB, Δ total, Δ reg, and S/w statistics for the paper.
