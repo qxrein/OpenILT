@@ -53,10 +53,11 @@ class FlareAwareILT(nn.Module):
         self.lr = self.cfg.get("lr", 0.01)
         self.max_iters = int(self.cfg.get("max_iters", 800))
         self.theta_M = self.cfg.get("theta_M", 10.0)
+        self.sensitivity_interval = int(self.cfg.get("sensitivity_interval", 5))
+        self.use_amp = bool(self.cfg.get("use_amp", True))  # FP16 on GPU for speed
 
-        # Pre-compute PSF_SC kernel for flare regularization
-        psf_sc = self.flare_psf.generate_shiraishi_psf()
-        self.psf_sc = psf_sc.to(next(self.litho.parameters(), torch.zeros(1)).device)
+        # Pre-compute PSF_SC kernel (moved to device in solve loop)
+        self.psf_sc = self.flare_psf.generate_shiraishi_psf()
 
     def compute_pvband(self, mask):
         """
@@ -127,21 +128,16 @@ class FlareAwareILT(nn.Module):
 
     def compute_flare_regularization(self, I_diff):
         """
-        Flare regularization term
-
-            L_flare = ∫ ||∇[PSF_SC * I_diff]||² dr
+        Flare regularization: L_flare = ∫ ||∇[PSF_SC * I_diff]||² dr
+        Uses finite differences (faster than torch.gradient).
         """
-        # PSF_SC * I_diff (ensure kernel is on the same device)
-        psf_sc = self.psf_sc.to(I_diff.device)
-        flare_contrib = F.conv2d(I_diff, psf_sc, padding="same")
-
-        # Spatial gradients
-        grad_y = torch.gradient(flare_contrib, dim=2)[0]
-        grad_x = torch.gradient(flare_contrib, dim=3)[0]
-        grad_norm_sq = grad_x ** 2 + grad_y ** 2
-
-        # Mean over space and batch
-        return grad_norm_sq.mean()
+        flare_contrib = F.conv2d(I_diff, self.psf_sc.to(I_diff.device), padding="same")
+        # Finite differences (4D: pad is (W_left, W_right, H_left, H_right))
+        gx = flare_contrib[:, :, :, 1:] - flare_contrib[:, :, :, :-1]
+        gy = flare_contrib[:, :, 1:, :] - flare_contrib[:, :, :-1, :]
+        gx = F.pad(gx, (0, 1, 0, 0), mode="replicate")
+        gy = F.pad(gy, (0, 0, 0, 1), mode="replicate")
+        return (gx**2 + gy**2).mean()
 
     def compute_loss(self, printed, target, mask, I_diff, I_flare, alpha):
         """
@@ -235,16 +231,17 @@ class FlareAwareILT(nn.Module):
         if params.dim() == 2:
             params = params.unsqueeze(0).unsqueeze(0)
 
-        device = next(self.litho.parameters(), target.new_zeros(1)).device
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         target = target.to(device)
         params = params.to(device).detach().clone().requires_grad_(True)
+        self.psf_sc = self.psf_sc.to(device)
 
         optimizer = Adam([params], lr=self.lr)
-
         best_loss = None
         best_params = None
         best_mask = None
         best_snapshot = {}
+        S_cached = None
 
         history = {
             "loss": [],
@@ -252,56 +249,54 @@ class FlareAwareILT(nn.Module):
             "flare_reg": [],
             "grad_norm": [],
         }
-
         bar_width = 30
+        autocast = torch.autocast("cuda", enabled=(device.type == "cuda" and self.use_amp))
 
         for iteration in range(self.max_iters):
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
-            # 1. Mask from continuous parameters (sigmoid)
-            mask = torch.sigmoid(self.theta_M * params)
+            with autocast:
+                mask = torch.sigmoid(self.theta_M * params)
+                I_diff = self._diffraction_limited_image(mask)
+                I_flare = F.conv2d(I_diff, self.psf_sc, padding="same")
+                alpha_mask = self.flare_psf.compute_flare_intensity_map(mask)
 
-            # 2. Diffraction-limited image from litho model
-            I_diff = self._diffraction_limited_image(mask)
+                if alpha_mask.shape[-2:] != I_diff.shape[-2:]:
+                    alpha_img = F.interpolate(
+                        alpha_mask, size=I_diff.shape[-2:], mode="bilinear", align_corners=False
+                    )
+                else:
+                    alpha_img = alpha_mask
 
-            # 3. Flare contribution I_flare = PSF_SC * I_diff
-            psf_sc = self.psf_sc.to(I_diff.device)
-            I_flare = F.conv2d(I_diff, psf_sc, padding="same")
+                I_total = I_diff + alpha_img * I_flare
+                printed = torch.sigmoid(10.0 * (I_total - 0.3))
 
-            # 4. Flare intensity map alpha(r) at mask resolution
-            alpha_mask = self.flare_psf.compute_flare_intensity_map(mask)
+                if printed.shape[-2:] != target.shape[-2:]:
+                    target_img = F.interpolate(target, size=printed.shape[-2:], mode="nearest")
+                else:
+                    target_img = target
 
-            # Separate version of alpha resized to the imaging grid used by
-            # I_diff / I_flare for the forward model only.
-            if alpha_mask.shape[-2:] != I_diff.shape[-2:]:
-                alpha_img = F.interpolate(
-                    alpha_mask,
-                    size=I_diff.shape[-2:],
-                    mode="bilinear",
-                    align_corners=False,
+                # Sensitivity map: recompute every N iters to save cost
+                use_cached = (
+                    S_cached is not None
+                    and iteration > 0
+                    and iteration % self.sensitivity_interval != 0
                 )
-            else:
-                alpha_img = alpha_mask
+                if use_cached:
+                    S = S_cached
+                else:
+                    S = self.compute_sensitivity_map(mask, I_diff, I_flare)
+                    S_cached = S
 
-            # 5. Total image with flare: I = I_diff + α · I_flare
-            I_total = I_diff + alpha_img * I_flare
-
-            # 6. Simple resist model
-            printed = torch.sigmoid(10.0 * (I_total - 0.3))
-
-            # 7. Loss (use alpha at mask resolution for weighting). If the
-            # imaging grid resolution differs from the target resolution,
-            # resize the target to the printed image grid for the fidelity term.
-            if printed.shape[-2:] != target.shape[-2:]:
-                target_img = F.interpolate(
-                    target,
-                    size=printed.shape[-2:],
-                    mode="nearest",
-                )
-            else:
-                target_img = target
-
-            loss, metrics = self.compute_loss(printed, target_img, mask, I_diff, I_flare, alpha_mask)
+                w = self.compute_adaptive_weights(S, alpha_mask)
+                if w.shape[-2:] != printed.shape[-2:]:
+                    w_img = F.interpolate(w, size=printed.shape[-2:], mode="bilinear", align_corners=False)
+                else:
+                    w_img = w
+                weighted_l2 = (w_img * (printed - target_img) ** 2).mean()
+                flare_reg = self.compute_flare_regularization(I_diff)
+                loss = weighted_l2 + self.mu * flare_reg
+                metrics = {"weighted_l2": weighted_l2, "flare_reg": flare_reg}
             loss.backward()
 
             grad_norm = 0.0
@@ -324,6 +319,8 @@ class FlareAwareILT(nn.Module):
                     "printed": printed.detach().clone(),
                     "I_diff": I_diff.detach().clone(),
                     "alpha_mask": alpha_mask.detach().clone(),
+                    "S": S.detach().clone(),
+                    "w": w.detach().clone(),
                 }
 
             # Text progress bar

@@ -57,12 +57,14 @@ class FlarePSF:
         xx, yy = torch.meshgrid(x, y, indexing="ij")
         rr = torch.sqrt(xx ** 2 + yy ** 2)
 
-        # Radial interpolation: nearest neighbor over the sampled 1D profile
+        # Radial interpolation: vectorized nearest neighbor
         rr_flat = rr.view(-1)
-        kernel_flat = torch.empty_like(rr_flat)
-        for idx in range(rr_flat.numel()):
-            ridx = torch.argmin(torch.abs(r - rr_flat[idx]))
-            kernel_flat[idx] = psf_values[ridx]
+        # r is [0, r_max]; for each rr find closest r index
+        ridx = torch.clamp(
+            ((rr_flat / r_max_nm) * (self.kernel_size - 1)).long(),
+            0, self.kernel_size - 1
+        )
+        kernel_flat = psf_values[ridx]
         kernel = kernel_flat.view_as(rr)
 
         # Normalize PSF_SC to unit sum
@@ -71,20 +73,24 @@ class FlarePSF:
         # Shape: [1, 1, H, W] for conv2d
         return kernel.unsqueeze(0).unsqueeze(0)
 
-    def compute_flare_intensity_map(self, mask: torch.Tensor, sigma_nm: float = 2000.0) -> torch.Tensor:
+    def compute_flare_intensity_map(
+        self, mask: torch.Tensor, sigma_nm: float = 2000.0, max_kernel_size: int = 65
+    ) -> torch.Tensor:
         """
         Compute the spatially varying flare intensity map
 
             alpha(r) = gamma * [K_density * M](r)
 
-        where K_density is a Gaussian kernel with standard deviation sigma_nm.
+        where K_density is a Gaussian kernel.
 
         Parameters
         ----------
         mask : torch.Tensor
             Mask tensor of shape [B, 1, H, W].
         sigma_nm : float
-            Standard deviation of the Gaussian kernel in nm (default 2 µm).
+            Standard deviation in nm (2 µm default).
+        max_kernel_size : int
+            Cap kernel size for speed (default 65).
 
         Returns
         -------
@@ -94,30 +100,16 @@ class FlarePSF:
         if mask.dim() != 4 or mask.size(1) != 1:
             raise ValueError(f"mask must have shape [B, 1, H, W], got {mask.shape}")
 
-        device = mask.device
-
-        # Convert sigma from nm to pixels
-        sigma_px = sigma_nm / float(self.pixel_size)
-
-        # Kernel size ~ 6 sigma (3-sigma on each side)
-        kernel_size = int(6 * sigma_px)
+        sigma_px = max(sigma_nm / float(self.pixel_size), 2.0)
+        kernel_size = min(int(6 * sigma_px), max_kernel_size)
         if kernel_size % 2 == 0:
             kernel_size += 1
 
         half = kernel_size // 2
-        x = torch.arange(-half, half + 1, device=device, dtype=mask.dtype)
+        x = torch.arange(-half, half + 1, device=mask.device, dtype=mask.dtype)
         xx, yy = torch.meshgrid(x, x, indexing="ij")
-
-        gaussian = torch.exp(-(xx ** 2 + yy ** 2) / (2.0 * sigma_px ** 2))
-        gaussian = gaussian / gaussian.sum()
-        gaussian = gaussian.unsqueeze(0).unsqueeze(0)  # [1, 1, kH, kW]
-
-        # Convolution over the mask gives a local pattern density
+        gaussian = torch.exp(-(xx**2 + yy**2) / (2.0 * sigma_px**2))
+        gaussian = (gaussian / gaussian.sum()).unsqueeze(0).unsqueeze(0)
         density = F.conv2d(mask, gaussian, padding=half)
-
-        # Calibrated gain factor for alpha(r)
-        gamma = 0.1
-        alpha = gamma * density
-
-        return alpha
+        return 0.1 * density
 

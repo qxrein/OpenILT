@@ -99,6 +99,28 @@ def diagnose(outdir, pt_path):
         for k, v in metrics.items():
             print(f"  {k}: {v}")
 
+    # Flare maps (S, w) from best_snapshot if available
+    snapshot = data.get("best_snapshot", {})
+    S = snapshot.get("S")
+    w = snapshot.get("w")
+    alpha = snapshot.get("alpha_mask")
+    if S is not None:
+        S_np = S.cpu().numpy()
+        if S_np.ndim == 4:
+            S_np = S_np.squeeze()
+        print("\nSENSITIVITY MAP S")
+        print("-" * 40)
+        print(f"  shape: {S_np.shape}  range: [{S_np.min():.4f}, {S_np.max():.4f}]")
+        print(f"  mean: {S_np.mean():.4f}  std: {S_np.std():.4f}")
+    if w is not None:
+        w_np = w.cpu().numpy()
+        if w_np.ndim == 4:
+            w_np = w_np.squeeze()
+        print("\nADAPTIVE WEIGHTS w")
+        print("-" * 40)
+        print(f"  shape: {w_np.shape}  range: [{w_np.min():.4f}, {w_np.max():.4f}]")
+        print(f"  mean: {w_np.mean():.4f}  std: {w_np.std():.4f}")
+
     # Diagnostic figure
     fig, axes = plt.subplots(2, 3, figsize=(12, 8))
 
@@ -147,6 +169,28 @@ def diagnose(outdir, pt_path):
     plt.savefig(diag_path, dpi=150)
     plt.close()
     print(f"\nDiagnostic plot saved: {diag_path}")
+
+    # Flare diagnostics: S, w, alpha
+    if S is not None or w is not None or alpha is not None:
+        fig2, ax2 = plt.subplots(1, 3, figsize=(12, 4))
+        idx = 0
+        for name, arr in [("Sensitivity S", S), ("Weights w", w), ("Alpha α", alpha)]:
+            if arr is not None:
+                a = arr.cpu().numpy()
+                if a.ndim == 4:
+                    a = a.squeeze()
+                im = ax2[idx].imshow(a, cmap="viridis")
+                ax2[idx].set_title(name)
+                ax2[idx].axis("off")
+                plt.colorbar(im, ax=ax2[idx])
+                idx += 1
+        for j in range(idx, 3):
+            ax2[j].axis("off")
+        plt.tight_layout()
+        flare_path = os.path.join(outdir, "flare_diagnostics.png")
+        plt.savefig(flare_path, dpi=150)
+        plt.close()
+        print(f"Flare diagnostics saved: {flare_path}")
     print("=" * 55)
 
 

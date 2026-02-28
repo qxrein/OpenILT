@@ -8,6 +8,7 @@ simulator wrapped by `pyilt.lithosim.LithoSim`. For true Abbe/Hopkins
 behavior, replace that wrapper with a TorchLitho-based implementation.
 """
 
+import argparse
 import os
 import sys
 import time
@@ -34,19 +35,45 @@ from pyilt.flare_aware_solver import FlareAwareILT
 from pyilt.lithosim import LithoSim
 
 
+def create_synthetic_pattern(h: int, w: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Create dense (left) vs sparse (right) pattern for flare contrast.
+    Left half: dense (all 1s) → high alpha (flare). Right half: sparse lines → low alpha.
+    """
+    target = torch.zeros(h, w, dtype=torch.float32)
+    # Left 50%: fully dense
+    target[:, : w // 2] = 1.0
+    # Right 50%: sparse vertical lines (every 16 px, 8 px wide)
+    for c in range(w // 2, w, 16):
+        target[:, c : min(c + 8, w)] = 1.0
+    # Initial params: target + small noise
+    params = 2 * target - 1 + 0.05 * torch.randn(h, w)
+    return target, params.to(torch.float32)
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Flare-aware ILT optimization")
+    parser.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="Use synthetic dense/sparse pattern instead of benchmark (strong flare contrast)",
+    )
+    args = parser.parse_args()
+
     cfg = {
-        # ILT config tuned for gradient flow + clear convergence
-        "max_iters": 60,
+        # ILT config tuned for RTX 3050 / i5 12th gen (faster)
+        "max_iters": 40,
         "lr": 0.1,
         "flare_weight_beta": 5.0,
-        "flare_reg_weight": 0.01,
+        "flare_reg_weight": 0.3,  # Strong flare penalty for visible flare-aware behavior
         "lambda1": 0.0,
         "theta_M": 10.0,
+        "sensitivity_interval": 5,  # Recompute S every 5 iters (saves ~40% time)
+        "use_amp": True,
     }
 
-    # Smaller flare kernel for quick tests
-    flare_psf = FlarePSF(tis=0.08, kernel_size=101, pixel_size=1.0)
+    # Small flare kernel for speed (33 vs 101: ~10x faster conv)
+    flare_psf = FlarePSF(tis=0.08, kernel_size=33, pixel_size=1.0)
 
     # Use SimpleDiffractionLitho for optimization so gradients flow.
     # TorchLithoAbbe returns detached tensors (no gradients), so the
@@ -58,40 +85,40 @@ def main():
 
     solver = FlareAwareILT(cfg, litho, flare_psf)
 
-    # Load a benchmark testcase
-    design = glp.Design("./benchmark/ICCAD2013/M1_test1.glp", down=1)
-
-    # Use the same tiling/centering as SimpleILT so the tile actually
-    # contains geometry.
-    cfg_simple = simpleilt.SimpleCfg("./config/simpleilt512.txt")
-    design.center(
-        cfg_simple["TileSizeX"],
-        cfg_simple["TileSizeY"],
-        cfg_simple["OffsetX"],
-        cfg_simple["OffsetY"],
-    )
-
-    init = initializer.PixelInit()
-    target, params = init.run(
-        design,
-        cfg_simple["TileSizeX"],
-        cfg_simple["TileSizeY"],
-        cfg_simple["OffsetX"],
-        cfg_simple["OffsetY"],
-    )
-
-    # Ensure float32 tensors without triggering copy-construction warnings
-    if isinstance(target, torch.Tensor):
-        target = target.detach().clone().to(dtype=torch.float32)
+    if args.synthetic:
+        # Synthetic: dense (left) vs sparse (right) for strong flare contrast
+        size = 256
+        target, params = create_synthetic_pattern(size, size)
+        print("Using synthetic dense/sparse pattern for flare contrast")
     else:
-        target = torch.tensor(target, dtype=torch.float32)
+        # Load benchmark testcase
+        design = glp.Design("./benchmark/ICCAD2013/M1_test1.glp", down=1)
+        cfg_simple = simpleilt.SimpleCfg("./config/multilevel256.txt")
+        design.center(
+            cfg_simple["TileSizeX"],
+            cfg_simple["TileSizeY"],
+            cfg_simple["OffsetX"],
+            cfg_simple["OffsetY"],
+        )
+        init = initializer.PixelInit()
+        target, params = init.run(
+            design,
+            cfg_simple["TileSizeX"],
+            cfg_simple["TileSizeY"],
+            cfg_simple["OffsetX"],
+            cfg_simple["OffsetY"],
+        )
+        if isinstance(target, torch.Tensor):
+            target = target.detach().clone().to(dtype=torch.float32)
+        else:
+            target = torch.tensor(target, dtype=torch.float32)
+        if isinstance(params, torch.Tensor):
+            params = params.detach().clone().to(dtype=torch.float32)
+        else:
+            params = torch.tensor(params, dtype=torch.float32)
 
-    if isinstance(params, torch.Tensor):
-        params = params.detach().clone().to(dtype=torch.float32)
-    else:
-        params = torch.tensor(params, dtype=torch.float32)
-
-    # Run optimization
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
     print("Starting flare-aware ILT optimization...")
     best_params, best_mask, info = solver.solve(target, params, return_history=True)
 
