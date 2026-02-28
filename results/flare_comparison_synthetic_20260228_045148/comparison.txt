@@ -1,0 +1,3 @@
+Pattern: synthetic
+Flare-aware:      L2=15603.00  PVB=285.00  err%=7.15  loss=8.2308e-03
+Non-flare-aware:  L2=15637.00  PVB=292.00  err%=6.98  loss=6.1272e-03

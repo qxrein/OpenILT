@@ -50,6 +50,7 @@ class FlareAwareILT(nn.Module):
         self.beta = self.cfg.get("flare_weight_beta", 5.0)
         self.mu = self.cfg.get("flare_reg_weight", 0.1)
         self.lambda1 = self.cfg.get("lambda1", 1.0)
+        self.bin_weight = self.cfg.get("bin_weight", 0.0)
         self.lr = self.cfg.get("lr", 0.01)
         self.max_iters = int(self.cfg.get("max_iters", 800))
         self.theta_M = self.cfg.get("theta_M", 10.0)
@@ -125,6 +126,13 @@ class FlareAwareILT(nn.Module):
             w(r) = S(r) / (1 + β·α(r))
         """
         return S / (1.0 + self.beta * alpha)
+
+    def compute_binarization_loss(self, mask: torch.Tensor) -> torch.Tensor:
+        """
+        Penalize mid-gray values: L_bin = mean(mask * (1 - mask)).
+        Minimum when mask is 0 or 1.
+        """
+        return (mask * (1.0 - mask)).mean()
 
     def compute_flare_regularization(self, I_diff):
         """
@@ -249,6 +257,8 @@ class FlareAwareILT(nn.Module):
             "flare_reg": [],
             "grad_norm": [],
         }
+        if self.bin_weight > 0:
+            history["bin_loss"] = []
         bar_width = 30
         autocast = torch.autocast("cuda", enabled=(device.type == "cuda" and self.use_amp))
 
@@ -295,8 +305,13 @@ class FlareAwareILT(nn.Module):
                     w_img = w
                 weighted_l2 = (w_img * (printed - target_img) ** 2).mean()
                 flare_reg = self.compute_flare_regularization(I_diff)
-                loss = weighted_l2 + self.mu * flare_reg
-                metrics = {"weighted_l2": weighted_l2, "flare_reg": flare_reg}
+                bin_loss = self.compute_binarization_loss(mask)
+                loss = weighted_l2 + self.mu * flare_reg + self.bin_weight * bin_loss
+                metrics = {
+                    "weighted_l2": weighted_l2,
+                    "flare_reg": flare_reg,
+                    "bin_loss": bin_loss,
+                }
             loss.backward()
 
             grad_norm = 0.0
@@ -309,6 +324,8 @@ class FlareAwareILT(nn.Module):
             history["loss"].append(float(loss.detach().cpu()))
             history["weighted_l2"].append(float(metrics["weighted_l2"].detach().cpu()))
             history["flare_reg"].append(float(metrics["flare_reg"].detach().cpu()))
+            if self.bin_weight > 0:
+                history["bin_loss"].append(float(metrics["bin_loss"].detach().cpu()))
 
             if best_loss is None or loss.item() < best_loss:
                 best_loss = loss.item()

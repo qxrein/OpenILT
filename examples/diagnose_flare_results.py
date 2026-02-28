@@ -80,6 +80,7 @@ def diagnose(outdir, pt_path):
         wl2 = np.array(hist["weighted_l2"], dtype=float)
         reg = np.array(hist["flare_reg"], dtype=float)
         n = len(loss)
+        bin_loss = np.array(hist["bin_loss"], dtype=float) if "bin_loss" in hist else None
         print("\nLOSS HISTORY")
         print("-" * 40)
         print(f"  iterations: {n}")
@@ -87,8 +88,10 @@ def diagnose(outdir, pt_path):
         print(f"  Δ total:   {loss[-1] - loss[0]:+.4f}")
         print(f"  Δ L2:      {wl2[-1] - wl2[0]:+.4f}")
         print(f"  Δ reg:     {reg[-1] - reg[0]:+.4f}")
+        if bin_loss is not None:
+            print(f"  Δ bin:     {bin_loss[-1] - bin_loss[0]:+.4f}")
     else:
-        loss = wl2 = reg = np.array([])
+        loss = wl2 = reg = bin_loss = np.array([])
         n = 0
 
     # Metrics if saved
@@ -147,6 +150,8 @@ def diagnose(outdir, pt_path):
         axes[1, 0].plot(iters, loss, "--o", color="black", label="total", markersize=2)
         axes[1, 0].plot(iters, wl2, ":s", color="dimgray", label="weighted_l2", markersize=2)
         axes[1, 0].plot(iters, reg, "-.^", color="gray", label="flare_reg", markersize=2)
+        if bin_loss is not None and len(bin_loss) == n:
+            axes[1, 0].plot(iters, bin_loss, ":d", color="silver", label="bin_loss", markersize=2)
         axes[1, 0].set_yscale("log")
         axes[1, 0].set_xlabel("iteration")
         axes[1, 0].set_ylabel("loss")

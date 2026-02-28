@@ -58,6 +58,14 @@ You can test the ILT methods in OpenILT with the following commands:
 python3 pyilt/simpleilt.py
 ```
 
+*Flare-aware ILT* (EUV flare modeling and optimization)
+```
+python3 examples/run_flare_aware_ilt.py
+python3 examples/run_flare_aware_ilt.py --synthetic 
+python3 examples/diagnose_flare_results.py
+```
+See [docs/FLARE_OPTIMIZATION.md](docs/FLARE_OPTIMIZATION.md) for how flare optimization works.
+
 The final mask images will be saved in tmp/. 
 
 ### Possible issues

@@ -58,30 +58,45 @@ def main():
         action="store_true",
         help="Use synthetic dense/sparse pattern instead of benchmark (strong flare contrast)",
     )
+    parser.add_argument(
+        "--torchlitho",
+        action="store_true",
+        help="Use TorchLitho for I_diff (no gradients; S will be uniform). For S verification, TorchLitho would need to be differentiable.",
+    )
+    parser.add_argument(
+        "--no-flare",
+        action="store_true",
+        help="Disable flare regularization (μ=0) for comparison with flare-aware run.",
+    )
     args = parser.parse_args()
 
     cfg = {
         # ILT config tuned for RTX 3050 / i5 12th gen (faster)
         "max_iters": 40,
         "lr": 0.1,
-        "flare_weight_beta": 5.0,
-        "flare_reg_weight": 0.3,  # Strong flare penalty for visible flare-aware behavior
+        "flare_weight_beta": 2.0,  # Smaller β so w varies more with α
+        "flare_reg_weight": 0.0 if args.no_flare else 0.3,  # μ=0 for non-flare-aware comparison
         "lambda1": 0.0,
         "theta_M": 10.0,
-        "sensitivity_interval": 5,  # Recompute S every 5 iters (saves ~40% time)
+        "bin_weight": 0.05,  # Push mask toward 0/1 (reduces stippling)
+        "sensitivity_interval": 5,
         "use_amp": True,
     }
 
     # Small flare kernel for speed (33 vs 101: ~10x faster conv)
     flare_psf = FlarePSF(tis=0.08, kernel_size=33, pixel_size=1.0)
 
-    # Use SimpleDiffractionLitho for optimization so gradients flow.
-    # TorchLithoAbbe returns detached tensors (no gradients), so the
-    # optimizer cannot update the mask. SimpleDiffractionLitho uses
-    # I_diff = mask (identity), which is fully differentiable.
-    from pyilt.simple_diffraction import SimpleDiffractionLitho
+    # Litho model: SimpleDiffractionLitho (differentiable) or TorchLitho (no gradients)
+    if args.torchlitho:
+        from pyilt.torchlitho_adapter import TorchLithoAbbe
 
-    litho = SimpleDiffractionLitho()
+        litho = TorchLithoAbbe(image_method="abbe")
+        print("Using TorchLitho (S will be uniform: no gradients from litho)")
+    else:
+        from pyilt.simple_diffraction import SimpleDiffractionLitho
+
+        litho = SimpleDiffractionLitho()
+        print("Using SimpleDiffractionLitho (differentiable Gaussian blur)")
 
     solver = FlareAwareILT(cfg, litho, flare_psf)
 
@@ -209,6 +224,17 @@ def main():
         linewidth=1.0,
         markersize=3,
     )
+    if "bin_loss" in info["history"]:
+        plt.plot(
+            iters,
+            info["history"]["bin_loss"],
+            linestyle=":",
+            marker="d",
+            color="silver",
+            label="bin_loss",
+            linewidth=1.0,
+            markersize=3,
+        )
     plt.yscale("log")
     plt.xlabel("iteration")
     plt.ylabel("loss")
