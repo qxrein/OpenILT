@@ -58,6 +58,14 @@ You can test the ILT methods in OpenILT with the following commands:
 python3 pyilt/simpleilt.py
 ```
 
+*Flare-aware ILT*
+```
+python3 examples/run_flare_aware_ilt.py
+python3 examples/run_flare_aware_ilt.py --synthetic
+python3 examples/diagnose_flare_results.py
+```
+If loss curves look flat and show no change, see [docs/WHY_NO_CHANGE_IN_PLOTS.md](docs/WHY_NO_CHANGE_IN_PLOTS.md).
+
 The final mask images will be saved in tmp/. 
 
 ### Possible issues
