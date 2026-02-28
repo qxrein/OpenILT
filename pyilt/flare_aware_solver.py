@@ -250,6 +250,7 @@ class FlareAwareILT(nn.Module):
             "loss": [],
             "weighted_l2": [],
             "flare_reg": [],
+            "grad_norm": [],
         }
 
         bar_width = 30
@@ -302,6 +303,12 @@ class FlareAwareILT(nn.Module):
 
             loss, metrics = self.compute_loss(printed, target_img, mask, I_diff, I_flare, alpha_mask)
             loss.backward()
+
+            grad_norm = 0.0
+            if params.grad is not None:
+                grad_norm = params.grad.data.norm(2).item()
+            history["grad_norm"].append(grad_norm)
+
             optimizer.step()
 
             history["loss"].append(float(loss.detach().cpu()))
